@@ -2,6 +2,7 @@ import osmnx as ox
 import networkx as nx
 import matplotlib.pyplot as plt
 import math
+import random
 
 # --- RealMap Class ---
 class RealMap:
@@ -72,29 +73,25 @@ class PathPlanner():
         x2, y2 = self.map.intersections[self.goal]
         return self.heuristic_weight * math.hypot(x2 - x1, y2 - y1)
 
-# --- Visualization with Delays ---
+# --- Visualization ---
 def show_map(map_obj, path=None, start=None, goal=None, traffic_lights=None):
     G = map_obj._graph
     pos = map_obj.intersections
-
-    # Define node colors
     node_colors = []
     for node in G.nodes():
         if node == start:
-            node_colors.append("blue")  # Start
+            node_colors.append("blue")
         elif node == goal:
-            node_colors.append("red")   # Goal
+            node_colors.append("red")
         elif traffic_lights and traffic_lights.get(node, 0) > 0:
-            node_colors.append("orange")  # Delay nodes
+            node_colors.append("orange")
         elif path and node in path:
-            node_colors.append("green")   # Path
+            node_colors.append("green")
         else:
-            node_colors.append("gray")    # Other
+            node_colors.append("gray")
 
     plt.figure(figsize=(12, 10))
     nx.draw(G, pos, node_size=30, node_color=node_colors, edge_color='lightgray', with_labels=False)
-
-    # Highlight route edges
     if path:
         route_edges = list(zip(path[:-1], path[1:]))
         nx.draw_networkx_edges(G, pos, edgelist=route_edges, edge_color='red', width=2)
@@ -103,37 +100,62 @@ def show_map(map_obj, path=None, start=None, goal=None, traffic_lights=None):
     plt.axis("off")
     plt.show()
 
+# --- Evaluation of Path Accuracy ---
+def evaluate_path_accuracy(map_obj, planner_with_delays, planner_without_delays, traffic_lights):
+    def compute_total_time(path, lights):
+        total_distance = 0
+        total_delay = sum(lights.get(n, 0) for n in path)
+        for i in range(len(path) - 1):
+            n1, n2 = path[i], path[i + 1]
+            x1, y1 = map_obj.intersections[n1]
+            x2, y2 = map_obj.intersections[n2]
+            total_distance += math.hypot(x2 - x1, y2 - y1) * 111  # rough km
+        speed_kmph = 30
+        speed_kmps = speed_kmph / 3600
+        time_sec = (total_distance / speed_kmps) + total_delay
+        return total_distance, time_sec, total_delay
+
+    dist_delay, time_delay, delay_time = compute_total_time(planner_with_delays.path, traffic_lights)
+    dist_base, time_base, _ = compute_total_time(planner_without_delays.path, {n: 0 for n in traffic_lights})
+
+    print("\n📊 Accuracy Evaluation:")
+    print(f"✅ With Delay Prediction: {time_delay/60:.2f} min (Distance: {dist_delay:.2f} km)")
+    print(f"🔄 Without Delays       : {time_base/60:.2f} min (Distance: {dist_base:.2f} km)")
+
+    diff = time_base - time_delay
+    if diff > 0:
+        print(f"🎯 Delay-aware path is faster by {diff:.2f} seconds.")
+    else:
+        print(f"⚠️ Distance-only path is faster by {-diff:.2f} seconds.")
+
 # --- Utility to Get Nearest Node from GPS ---
 def get_nearest_node(G, lat, lon):
     return ox.distance.nearest_nodes(G, X=lon, Y=lat)
 
-# --- Main Runner ---
+# --- Main Execution ---
 if __name__ == "__main__":
-    center = (9.6615, 80.0255)  # Jaffna center
+    center = (6.9271, 79.8612)  # Colombo city center
     map_obj, raw_graph = load_real_map(center_point=center, dist=2000)
 
-    # Define GPS Start and Goal
-    start_coords = (9.6680, 80.0115)  # Jaffna Teaching Hospital
-    goal_coords = (9.6639, 80.0256)   # Nallur Kandaswamy Temple
+    start_coords = (6.9275, 79.8600)  # Example location in Colombo
+    goal_coords = (6.9305, 79.8720)   # Another point in Colombo
 
-    # Get nearest nodes
     start_node = get_nearest_node(raw_graph, *start_coords)
     goal_node = get_nearest_node(raw_graph, *goal_coords)
 
-    # Simulate delays
+    # Simulate traffic light delays
     traffic_lights = {node: 0 for node in raw_graph.nodes()}
-    traffic_lights[start_node] = 0
-    traffic_lights[goal_node] = 0
-    # Add some sample delays
-    import random
-    for node in list(raw_graph.nodes())[::10]:  # Random every 10th node
+    for node in list(raw_graph.nodes())[::15]:  # Every 15th node gets a delay
         traffic_lights[node] = random.randint(5, 20)
 
-    # Run A* path planner
-    planner = PathPlanner(map_obj, start=start_node, goal=goal_node, heuristic_weight=1.0, traffic_lights=traffic_lights)
+    # Plan with delays
+    planner_with = PathPlanner(map_obj, start=start_node, goal=goal_node, traffic_lights=traffic_lights)
+    # Plan without delays
+    planner_without = PathPlanner(map_obj, start=start_node, goal=goal_node, traffic_lights={n: 0 for n in traffic_lights})
 
-    if planner.path:
-        print("✅ Path found!")
-        show_map(map_obj, path=planner.path, start=start_node, goal=goal_node, traffic_lights=traffic_lights)
+    if planner_with.path:
+        print("✅ Route with delay prediction found.")
+        show_map(map_obj, path=planner_with.path, start=start_node, goal=goal_node, traffic_lights=traffic_lights)
+        evaluate_path_accuracy(map_obj, planner_with, planner_without, traffic_lights)
     else:
         print("❌ No path could be found.")
