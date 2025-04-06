@@ -1,0 +1,3 @@
+RouteType,Distance(km),TotalTime(min),Delay(seconds)
+Delay-Aware,2.26,12.33,468.6
+Distance-Only,2.26,4.52,0
